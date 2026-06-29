@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,7 @@ import pandas as pd
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches
+from docx.shared import Inches, Pt
 
 from lab4.config import PROCESS_FEATURES
 from lab4.pipeline import AnalysisContext
@@ -133,6 +134,7 @@ def add_results_section(document: Document, context: AnalysisContext, figure_pat
         "（4）相关性分析按检查项目逐项计算 8 个核心工艺字段的 Pearson 系数；"
         "（5）回归部分使用随机森林，同时保留物料品号与型号的类别信息。"
     )
+    add_code_change_section(document, context)
 
 
 def add_summary_section(document: Document) -> None:
@@ -163,6 +165,107 @@ def write_dataframe_table(document: Document, frame: pd.DataFrame, max_rows: int
                 cells[index].text = f"{value:.4f}"
             else:
                 cells[index].text = str(value)
+
+
+def add_code_change_section(document: Document, context: AnalysisContext) -> None:
+    document.add_heading("5. 代码新增与删减体现", level=2)
+    document.add_paragraph("以下内容直接摘录自当前实验4源码相对基线版本的实际差异，用于体现新增与删减位置。")
+    changes = collect_code_changes(context)
+    if not changes:
+        document.add_paragraph("当前未检测到可展示的源码新增或删减。")
+        return
+
+    for relative_path, hunks in changes:
+        document.add_paragraph(f"文件：{relative_path}")
+        for header, lines in hunks:
+            run = document.add_paragraph().add_run(f"{header}\n" + "\n".join(lines))
+            run.font.name = "Courier New"
+            run.font.size = Pt(8.5)
+
+
+def collect_code_changes(context: AnalysisContext) -> list[tuple[str, list[tuple[str, list[str]]]]]:
+    repo_root = context.paths.data_dir.parent
+    targets = [
+        str((context.paths.data_dir / "lab4").relative_to(repo_root)),
+        str((context.paths.data_dir / "run_analysis.py").relative_to(repo_root)),
+    ]
+    baseline = find_baseline_commit(repo_root, targets)
+    if not baseline:
+        return []
+
+    diff_result = subprocess.run(
+        ["git", "-C", str(repo_root), "diff", "--unified=0", "--no-color", baseline, "--", *targets],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if diff_result.returncode not in {0, 1} or not diff_result.stdout.strip():
+        return []
+    return parse_code_change_diff(diff_result.stdout)
+
+
+def find_baseline_commit(repo_root: Path, targets: list[str]) -> str:
+    revision_result = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-list", "--reverse", "HEAD", "--", *targets],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if revision_result.returncode != 0:
+        return ""
+    revisions = [line.strip() for line in revision_result.stdout.splitlines() if line.strip()]
+    return revisions[0] if revisions else ""
+
+
+def parse_code_change_diff(diff_text: str) -> list[tuple[str, list[tuple[str, list[str]]]]]:
+    max_files = 6
+    max_lines_per_file = 80
+    changes: list[tuple[str, list[tuple[str, list[str]]]]] = []
+    current_path = ""
+    current_hunks: list[tuple[str, list[str]]] = []
+    current_header = ""
+    current_lines: list[str] = []
+    line_count = 0
+
+    def flush_hunk() -> None:
+        nonlocal current_header, current_lines
+        if current_header and current_lines:
+            current_hunks.append((current_header, current_lines))
+        current_header = ""
+        current_lines = []
+
+    def flush_file() -> None:
+        nonlocal current_path, current_hunks, line_count
+        flush_hunk()
+        if current_path and current_hunks and len(changes) < max_files:
+            changes.append((current_path, current_hunks))
+        current_path = ""
+        current_hunks = []
+        line_count = 0
+
+    for raw_line in diff_text.splitlines():
+        if raw_line.startswith("diff --git "):
+            flush_file()
+            continue
+        if raw_line.startswith("+++ "):
+            candidate = raw_line[4:].strip().strip('"')
+            if candidate.startswith("b/"):
+                candidate = candidate[2:]
+            current_path = candidate
+            continue
+        if raw_line.startswith("@@ "):
+            flush_hunk()
+            current_header = raw_line
+            continue
+        if raw_line.startswith(("+++", "---")):
+            continue
+        if not raw_line.startswith(("+", "-")) or line_count >= max_lines_per_file:
+            continue
+        current_lines.append(raw_line)
+        line_count += 1
+
+    flush_file()
+    return changes
 
 
 def generate_figures(context: AnalysisContext) -> dict[str, Path]:
