@@ -194,7 +194,7 @@ def collect_code_changes(context: AnalysisContext) -> list[tuple[str, list[tuple
         return []
 
     diff_result = subprocess.run(
-        ["git", "-C", str(repo_root), "diff", "--unified=0", "--no-color", baseline, "--", *targets],
+        ["git", "-c", "core.quotepath=false", "-C", str(repo_root), "diff", "--unified=0", "--no-color", baseline, "--", *targets],
         capture_output=True,
         text=True,
         check=False,
