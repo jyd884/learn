@@ -72,10 +72,8 @@ class DataPreparationTask(AnalysisTask):
         quality_enriched = enrich_quality_table(quality_raw)
         process_stats = process_table[list(PROCESS_FEATURES)].describe().transpose().reset_index().rename(columns={"index": "工艺字段"})
 
-        process_long.to_csv(paths.output_dir / "process_long_records.csv", index=False, encoding="utf-8-sig")
         process_table.to_csv(paths.output_dir / "process_feature_table.csv", index=False, encoding="utf-8-sig")
         process_stats.to_csv(paths.output_dir / "process_feature_statistics.csv", index=False, encoding="utf-8-sig")
-        quality_enriched.to_csv(paths.output_dir / "quality_enriched_records.csv", index=False, encoding="utf-8-sig")
 
         context.data.update(
             process_long=process_long,
@@ -137,7 +135,43 @@ class ValidationAndSummaryTask(AnalysisTask):
             ]
         )
 
-        quality.to_csv(paths.output_dir / "quality_validation_results.csv", index=False, encoding="utf-8-sig")
+        field_summary = (
+            quality.groupby(["检查项目", "field_type"], dropna=False)
+            .agg(
+                样本数=("工单号", "size"),
+                可判断数=("actual_pass", lambda series: series.notna().sum()),
+                一致数=("isok_matches_validation", lambda series: (series == True).sum()),
+                不一致数=("isok_matches_validation", lambda series: (series == False).sum()),
+            )
+            .reset_index()
+        )
+        field_summary["一致率"] = field_summary.apply(
+            lambda row: safe_divide(row["一致数"], row["可判断数"]),
+            axis=1,
+        )
+        mismatch_detail = quality.loc[
+            quality["isok_matches_validation"] == False,
+            [
+                "批号",
+                "工单号",
+                "物料品名",
+                "检查项目",
+                "field_type",
+                "标准参数",
+                "检验参数(标准参数为数字时无需填写)",
+                "检验值",
+                "numeric_value",
+                "lower_bound",
+                "upper_bound",
+                "expected_text",
+                "IsOK",
+                "actual_pass",
+                "rule_source",
+            ],
+        ].copy()
+
+        field_summary.to_csv(paths.output_dir / "quality_validation_field_summary.csv", index=False, encoding="utf-8-sig")
+        mismatch_detail.to_csv(paths.output_dir / "quality_validation_mismatches.csv", index=False, encoding="utf-8-sig")
         material_purity.to_csv(paths.output_dir / "material_purity_summary.csv", index=False, encoding="utf-8-sig")
         validation_summary.to_csv(paths.output_dir / "validation_summary.csv", index=False, encoding="utf-8-sig")
 
@@ -145,6 +179,8 @@ class ValidationAndSummaryTask(AnalysisTask):
             quality_validated=quality,
             material_purity=material_purity,
             validation_summary=validation_summary,
+            validation_field_summary=field_summary,
+            validation_mismatch_detail=mismatch_detail,
         )
         mismatch_count = int((quality["isok_matches_validation"] == False).sum())
         return (
@@ -195,7 +231,7 @@ class CorrelationAnalysisTask(AnalysisTask):
         top_fields = correlation_detail.head(TOP_CORRELATION_FIELDS)["检查项目"].tolist()
 
         matrix_numeric = correlation_detail.set_index("检查项目").loc[top_fields, list(PROCESS_FEATURES)].transpose()
-        matrix_display = matrix_numeric.applymap(format_correlation)
+        matrix_display = matrix_numeric.apply(lambda column: column.map(format_correlation))
         matrix_display.to_csv(paths.output_dir / "correlation_matrix_top10.csv", encoding="utf-8-sig")
         matrix_numeric.to_csv(paths.output_dir / "correlation_matrix_top10_numeric.csv", encoding="utf-8-sig")
         correlation_detail.to_csv(paths.output_dir / "correlation_field_ranking.csv", index=False, encoding="utf-8-sig")
@@ -245,7 +281,12 @@ class RegressionTask(AnalysisTask):
     def execute(self, context: AnalysisContext) -> str:
         paths = context.paths
         joined = context.data["joined_numeric"]
-        candidate_fields = context.data["top_correlation_fields"][:TOP_REGRESSION_FIELDS]
+        candidate_fields = (
+            context.data["correlation_detail"]
+            .loc[lambda frame: frame["样本数"] >= 200, "检查项目"]
+            .head(TOP_REGRESSION_FIELDS)
+            .tolist()
+        )
 
         numeric_features = list(PROCESS_FEATURES)
         categorical_features = ["物料品号", "型号"]
@@ -305,6 +346,17 @@ class RegressionTask(AnalysisTask):
                 classify_prediction(value, lower, upper)
                 for value, lower, upper in zip(predictions, meta_test["lower_bound"], meta_test["upper_bound"], strict=False)
             ]
+            valid_mask = meta_test["actual_pass"].notna()
+            if valid_mask.any():
+                actual_labels = meta_test.loc[valid_mask, "actual_pass"].astype(bool).to_numpy()
+                predicted_labels = np.asarray(predicted_pass, dtype=bool)[valid_mask.to_numpy()]
+                precision = precision_score(actual_labels, predicted_labels, zero_division=0)
+                recall = recall_score(actual_labels, predicted_labels, zero_division=0)
+                f1_value = f1_score(actual_labels, predicted_labels, zero_division=0)
+            else:
+                precision = np.nan
+                recall = np.nan
+                f1_value = np.nan
 
             metrics_rows.append(
                 {
@@ -314,9 +366,9 @@ class RegressionTask(AnalysisTask):
                     "MAE": mean_absolute_error(y_test, predictions),
                     "RMSE": math.sqrt(mean_squared_error(y_test, predictions)),
                     "R2": r2_score(y_test, predictions),
-                    "Precision": precision_score(meta_test["actual_pass"], predicted_pass, zero_division=0),
-                    "Recall": recall_score(meta_test["actual_pass"], predicted_pass, zero_division=0),
-                    "F1": f1_score(meta_test["actual_pass"], predicted_pass, zero_division=0),
+                    "Precision": precision,
+                    "Recall": recall,
+                    "F1": f1_value,
                 }
             )
 

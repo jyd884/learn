@@ -50,7 +50,8 @@
 ## 主要输出
 
 - `outputs/process_feature_table.csv`：工艺宽表；
-- `outputs/quality_validation_results.csv`：品质字段解析与 `IsOK` 校验结果；
+- `outputs/quality_validation_field_summary.csv`：品质字段解析与 `IsOK` 校验汇总；
+- `outputs/quality_validation_mismatches.csv`：`IsOK` 不一致明细；
 - `outputs/material_purity_summary.csv`：物料品号纯度统计；
 - `outputs/correlation_matrix_top10.csv`：8x10 相关性矩阵；
 - `outputs/correlation_field_ranking.csv`：定量字段相关性排序；
