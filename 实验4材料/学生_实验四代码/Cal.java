@@ -1,7 +1,5 @@
 package szu.csse.softwaretesting.ch8;
 
-import java.io.*;
-
 public class Cal
 {
    public static int cal (int month1, int day1, int month2,
