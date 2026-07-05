@@ -16,13 +16,15 @@ public class Cal
    //               month1 == month2 implies day1 <= day2
    //               The range for year: 1 ... 10000
    //***********************************************************
+      validateInputs(month1, day1, month2, day2, year);
+
       int numDays;
 
       if (month2 == month1) // in the same month
          numDays  = day2 - day1;
       else
       {
-         int daysIn[] = {31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+         int daysIn[] = {0, 31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
          // Are we in a leap year?
          int m4 = year % 4;
          int m100 = year % 100;
@@ -42,5 +44,21 @@ public class Cal
       return (numDays);
    }
 
-}
+   private static void validateInputs(int month1, int day1, int month2, int day2, int year)
+   {
+      boolean validMonth1 = month1 >= 1 && month1 <= 12;
+      boolean validMonth2 = month2 >= 1 && month2 <= 12;
+      boolean validOrder = month1 <= month2;
+      boolean validDay1 = day1 >= 1 && day1 <= 31;
+      boolean validDay2 = day2 >= 1 && day2 <= 31;
+      boolean validSameMonthOrder = month1 != month2 || day1 <= day2;
+      boolean validYear = year >= 1 && year <= 10000;
 
+      if (!(validMonth1 && validMonth2 && validOrder && validDay1
+              && validDay2 && validSameMonthOrder && validYear))
+      {
+         throw new IllegalArgumentException("Invalid input for cal");
+      }
+   }
+
+}

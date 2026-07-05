@@ -21,7 +21,7 @@ public class OddOrPos
    
       for (int i = 0; i < x.length; i++)
       {
-         if (x[i]%2 == 1 || x[i] > 0)
+         if (x[i] % 2 != 0 || x[i] > 0)
          {
             count++;
          }
@@ -57,4 +57,3 @@ public class OddOrPos
       System.out.println ("Number of elements that are either odd or positive is: " + oddOrPos (inArr));
    }
 }
-
